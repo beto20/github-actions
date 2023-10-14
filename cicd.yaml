@@ -1,0 +1,57 @@
+name: CI/CD
+on:
+  push:
+    branches:
+      - master
+permissions:
+  id-token: write
+  contents: read
+env:
+  REGISTRY_PATH: <aws-ecr-path>
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Install dependencies
+      run: |
+        npm install
+      working-directory: ./app
+
+    - name: Run test
+      run: |
+        npm test
+      working-directory: ./app
+  
+  cd:
+    needs: ci
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: AWS authentication
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-to-assume: ${{secrets.AWS_IAM_ROLE}}
+          role-duration-seconds: 1200
+          role-session-name: ${{github.sha}}
+          aws-region: us-west-2
+
+      - name: Login to AWS ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Docker build and push
+        run: |
+          # docker build -t ${{steps.login-ecr.outputs.registry}}:${{github.sha}} .
+          docker build -t $REGISTRY_PATH:${{github.sha}} .
+          docker push $REGISTRY_PATH:${{github.sha}}
+        working-directory: ./app
+
+      - name: Deploy to EKS
+        run: |
+          aws eks update-kubeconfig --region us-west-2 --name alfa-eks
+          kubectl set image deployment/alfa-customer alfa-customer = $REGISTRY_PATH:${{github.sha}}
